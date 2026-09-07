@@ -1,13 +1,11 @@
 package com.example.dolar
 
-import android.appwidget.AppWidgetManager
-import android.content.ComponentName
 import android.content.Context
-import android.graphics.Color
-import android.widget.RemoteViews
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import kotlinx.coroutines.flow.first
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class DolarRateWorker(appContext: Context, workerParams: WorkerParameters) : CoroutineWorker(appContext, workerParams) {
 
@@ -17,41 +15,31 @@ class DolarRateWorker(appContext: Context, workerParams: WorkerParameters) : Cor
             // Fetch the list of rates
             val response = RetrofitClient.instance.getDolares()
 
-            // Find the specific rates
-            val oficialRate = response.find { it.fuente == "oficial" }?.promedio ?: 0.0
-            val paraleloRate = response.find { it.fuente == "paralelo" }?.promedio ?: 0.0
+            val oficial = response.find { it.fuente == "oficial" }
+            val paralelo = response.find { it.fuente == "paralelo" }
+            val oficialRate = oficial?.promedio ?: 0.0
+            val paraleloRate = paralelo?.promedio ?: 0.0
+            // Hora local del chequeo, no la fecha que reporta la API: el BCV
+            // solo publica una vez al día, así que si mostrábamos esa fecha
+            // el botón de refrescar parecía no hacer nada.
+            val updateText = horaActual()
 
-            // Get the saved color
-            val colorHex = dataStore.widgetTextColorFlow.first()
-            val color = Color.parseColor(colorHex)
-
-            // Update the widget with both rates and the chosen color
-            updateWidget(applicationContext, oficialRate, paraleloRate, color)
+            // Guardar como "última tasa buena conocida" y repintar el widget.
+            dataStore.saveRates(oficialRate, paraleloRate, updateText)
+            WidgetUpdater.refreshFromCache(applicationContext)
             Result.success()
         } catch (e: Exception) {
-            Result.failure()
+            // No borramos los valores anteriores: solo avisamos que ya no
+            // son frescos y repintamos el widget con lo último que sabíamos,
+            // en vez de dejarlo en "0.00 Bs".
+            dataStore.markRatesStale()
+            WidgetUpdater.refreshFromCache(applicationContext)
+            Result.retry()
         }
     }
 
-    private fun updateWidget(context: Context, oficialRate: Double, paraleloRate: Double, color: Int) {
-        val appWidgetManager = AppWidgetManager.getInstance(context)
-        val thisWidget = ComponentName(context, DolarWidgetProvider::class.java)
-        val allWidgetIds = appWidgetManager.getAppWidgetIds(thisWidget)
-
-        for (widgetId in allWidgetIds) {
-            val views = RemoteViews(context.packageName, R.layout.dolar_widget_layout)
-
-            // Update text
-            views.setTextViewText(R.id.widget_oficial_rate, String.format("%.2f Bs", oficialRate))
-            views.setTextViewText(R.id.widget_paralelo_rate, String.format("%.2f Bs", paraleloRate))
-
-            // Update color
-            views.setTextColor(R.id.widget_oficial_rate_label, color)
-            views.setTextColor(R.id.widget_oficial_rate, color)
-            views.setTextColor(R.id.widget_paralelo_rate_label, color)
-            views.setTextColor(R.id.widget_paralelo_rate, color)
-
-            appWidgetManager.updateAppWidget(widgetId, views)
-        }
+    private fun horaActual(): String {
+        val formatter = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault())
+        return formatter.format(Date())
     }
 }

@@ -4,7 +4,6 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@android:color/transparent"
-    android:gravity="center_vertical"
     android:orientation="vertical"
     android:paddingHorizontal="16dp"
     android:paddingVertical="8dp">
@@ -18,14 +17,14 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="BCV: "
-            android:textColor="@android:color/black"
+            android:textColor="@android:color/white"
             android:textStyle="bold" />
         <TextView
             android:id="@+id/widget_oficial_rate"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="..."
-            android:textColor="@android:color/black" />
+            android:text="--"
+            android:textColor="@android:color/white" />
     </LinearLayout>
 
     <LinearLayout
@@ -38,14 +37,23 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Par: "
-            android:textColor="@android:color/black"
+            android:textColor="@android:color/white"
             android:textStyle="bold" />
         <TextView
             android:id="@+id/widget_paralelo_rate"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="..."
-            android:textColor="@android:color/black" />
+            android:text="--"
+            android:textColor="@android:color/white" />
     </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_last_update"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="-"
+        android:textColor="@android:color/white"
+        android:textSize="10sp" />
 
 </LinearLayout>

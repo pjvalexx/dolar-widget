@@ -4,10 +4,14 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -15,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -31,10 +36,16 @@ class MainActivity : ComponentActivity() {
                 val navController = rememberNavController()
                 NavHost(navController = navController, startDestination = "conversor") {
                     composable("conversor") {
-                        ConversorScreen(onNavigateToSettings = { navController.navigate("settings") })
+                        ConversorScreen(
+                            onNavigateToSettings = { navController.navigate("settings") },
+                            onNavigateToHistorico = { navController.navigate("historico") }
+                        )
                     }
                     composable("settings") {
                         SettingsScreen(onNavigateBack = { navController.popBackStack() })
+                    }
+                    composable("historico") {
+                        HistoricoScreen(onNavigateBack = { navController.popBackStack() })
                     }
                 }
             }
@@ -42,160 +53,222 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// Acepta "," o "." como separador decimal (el teclado de algunos teléfonos
+// muestra una "," que rompía la conversión a número) y descarta cualquier
+// otro carácter, dejando como mucho un solo punto decimal.
+private fun sanitizarMonto(input: String): String {
+    val normalizado = input.replace(',', '.')
+    val resultado = StringBuilder()
+    var puntoVisto = false
+    for (c in normalizado) {
+        if (c.isDigit()) {
+            resultado.append(c)
+        } else if (c == '.' && !puntoVisto) {
+            puntoVisto = true
+            resultado.append(c)
+        }
+    }
+    return resultado.toString()
+}
+
+private fun etiquetaTasa(tasa: TasaTipo): String = when (tasa) {
+    TasaTipo.BCV -> "dólares (USD)"
+    TasaTipo.EURO_BCV -> "euros (EUR)"
+    TasaTipo.USDT -> "USDT"
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConversorScreen(
-    modifier: Modifier = Modifier, 
+    modifier: Modifier = Modifier,
     dolarViewModel: DolarViewModel = viewModel(),
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onNavigateToHistorico: () -> Unit
 ) {
-    // ... (rest of the composable is the same as before)
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Conversor de Moneda") },
                 actions = {
+                    IconButton(onClick = onNavigateToHistorico) {
+                        Icon(Icons.Default.DateRange, contentDescription = "Histórico")
+                    }
                     IconButton(onClick = onNavigateToSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "Configuración")
                     }
                 }
             )
         }
-    ) {
-         val oficialRate by dolarViewModel.oficialRate.collectAsState()
-    val paraleloRate by dolarViewModel.paraleloRate.collectAsState()
-    val lastUpdate by dolarViewModel.lastUpdate.collectAsState()
-    val error by dolarViewModel.error.collectAsState()
-    val selectedRateType by dolarViewModel.selectedRateTye.collectAsState()
+    ) { padding ->
+        val bcvRate by dolarViewModel.bcvRate.collectAsState()
+        val euroBcvRate by dolarViewModel.euroBcvRate.collectAsState()
+        val usdtRate by dolarViewModel.usdtRate.collectAsState()
+        val bcvFecha by dolarViewModel.bcvFecha.collectAsState()
+        val euroBcvFecha by dolarViewModel.euroBcvFecha.collectAsState()
+        val lastUpdate by dolarViewModel.lastUpdate.collectAsState()
+        val isRefreshing by dolarViewModel.isRefreshing.collectAsState()
+        val error by dolarViewModel.error.collectAsState()
+        val selectedTasa by dolarViewModel.selectedTasa.collectAsState()
 
-    val currentRate = if (selectedRateType == RateType.OFICIAL) oficialRate else paraleloRate
-
-    var amountBs by remember { mutableStateOf("") }
-    var amountUsd by remember { mutableStateOf("") }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text("Conversor de Moneda", style = MaterialTheme.typography.headlineLarge)
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Rate display cards
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            RateCard("Oficial (BCV)", oficialRate)
-            RateCard("Paralelo", paraleloRate)
+        val currentRate = when (selectedTasa) {
+            TasaTipo.BCV -> bcvRate
+            TasaTipo.EURO_BCV -> euroBcvRate
+            TasaTipo.USDT -> usdtRate
         }
+        val monedaLabel = etiquetaTasa(selectedTasa)
 
-        Spacer(modifier = Modifier.height(8.dp))
+        var amountBs by remember { mutableStateOf("") }
+        var amountMoneda by remember { mutableStateOf("") }
 
-        // Last update and refresh button
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Actualizado: $lastUpdate", style = MaterialTheme.typography.bodySmall)
-            IconButton(onClick = { dolarViewModel.fetchDolarRates() }) {
-                Icon(Icons.Default.Refresh, contentDescription = "Refrescar tasas")
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Rate type selector
-        SegmentedButtonRow(selectedRateType, onRateTypeChange = {
-            dolarViewModel.selectRateType(it)
+        fun seleccionarTasa(tasa: TasaTipo) {
+            dolarViewModel.selectTasa(tasa)
             val bsValue = amountBs.toDoubleOrNull()
             if (bsValue != null) {
-                val newRate = if (it == RateType.OFICIAL) oficialRate else paraleloRate
-                if (newRate > 0) {
-                    amountUsd = String.format("%.2f", bsValue / newRate)
+                val nuevaTasa = when (tasa) {
+                    TasaTipo.BCV -> bcvRate
+                    TasaTipo.EURO_BCV -> euroBcvRate
+                    TasaTipo.USDT -> usdtRate
+                }
+                if (nuevaTasa > 0) {
+                    amountMoneda = String.format("%.2f", bsValue / nuevaTasa)
                 }
             }
-        })
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // --- Converters: Swapped order and reduced width ---
-        OutlinedTextField(
-            value = amountUsd,
-            onValueChange = {
-                amountUsd = it
-                val usdValue = it.toDoubleOrNull()
-                if (usdValue != null && currentRate > 0) {
-                    amountBs = String.format("%.2f", usdValue * currentRate)
-                } else if (it.isEmpty()) {
-                    amountBs = ""
-                }
-            },
-            label = { Text("Monto en dólares (USD)") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.width(280.dp) // Reduced width
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        OutlinedTextField(
-            value = amountBs,
-            onValueChange = {
-                amountBs = it
-                val bsValue = it.toDoubleOrNull()
-                if (bsValue != null && currentRate > 0) {
-                    amountUsd = String.format("%.2f", bsValue / currentRate)
-                } else if (it.isEmpty()) {
-                    amountUsd = ""
-                }
-            },
-            label = { Text("Monto en bolívares (Bs)") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.width(280.dp) // Reduced width
-        )
-
-        if (error != null) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(text = error!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
         }
-    }
-    }
-}
 
-@Composable
-fun RateCard(title: String, rate: Double) {
-    Card(modifier = Modifier.width(150.dp)) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = modifier
+                .fillMaxSize()
+                .padding(padding)
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
             Spacer(modifier = Modifier.height(8.dp))
-            Text(String.format("%.2f Bs", rate), style = MaterialTheme.typography.headlineSmall)
+
+            Text("Conversor de Moneda", style = MaterialTheme.typography.headlineLarge)
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Las 3 tasas de la app. Tocar una la selecciona para la calculadora de abajo.
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TasaCard("BCV", bcvRate, selected = selectedTasa == TasaTipo.BCV, fecha = bcvFecha) {
+                    seleccionarTasa(TasaTipo.BCV)
+                }
+                TasaCard("USDT", usdtRate, selected = selectedTasa == TasaTipo.USDT) {
+                    seleccionarTasa(TasaTipo.USDT)
+                }
+                TasaCard("Euro BCV", euroBcvRate, selected = selectedTasa == TasaTipo.EURO_BCV, fecha = euroBcvFecha) {
+                    seleccionarTasa(TasaTipo.EURO_BCV)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Last update and refresh button
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Actualizado: $lastUpdate", style = MaterialTheme.typography.bodySmall)
+                IconButton(onClick = { dolarViewModel.refreshAll() }, enabled = !isRefreshing) {
+                    if (isRefreshing) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refrescar tasas")
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            OutlinedTextField(
+                value = amountMoneda,
+                onValueChange = { raw ->
+                    val texto = sanitizarMonto(raw)
+                    amountMoneda = texto
+                    val valor = texto.toDoubleOrNull()
+                    if (valor != null && currentRate > 0) {
+                        amountBs = String.format("%.2f", valor * currentRate)
+                    } else if (texto.isEmpty()) {
+                        amountBs = ""
+                    }
+                },
+                label = { Text("Monto en $monedaLabel") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.width(280.dp)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedTextField(
+                value = amountBs,
+                onValueChange = { raw ->
+                    val texto = sanitizarMonto(raw)
+                    amountBs = texto
+                    val bsValue = texto.toDoubleOrNull()
+                    if (bsValue != null && currentRate > 0) {
+                        amountMoneda = String.format("%.2f", bsValue / currentRate)
+                    } else if (texto.isEmpty()) {
+                        amountMoneda = ""
+                    }
+                },
+                label = { Text("Monto en bolívares (Bs)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.width(280.dp)
+            )
+
+            if (error != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(text = error!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+            }
+
+            // Espacio de sobra para que el teclado nunca deje el último campo pegado al borde.
+            Spacer(modifier = Modifier.height(48.dp))
         }
     }
 }
 
-// Add OptIn here as this composable uses the experimental components
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SegmentedButtonRow(selected: RateType, onRateTypeChange: (RateType) -> Unit) {
-    SingleChoiceSegmentedButtonRow {
-        SegmentedButton(
-            shape = RoundedCornerShape(topStart = 50.dp, bottomStart = 50.dp),
-            selected = selected == RateType.OFICIAL,
-            onClick = { onRateTypeChange(RateType.OFICIAL) }
+fun TasaCard(title: String, rate: Double, selected: Boolean, fecha: String = "-", onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .width(108.dp)
+            .clickable(onClick = onClick),
+        border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(12.dp)
+                .fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("Oficial")
-        }
-        SegmentedButton(
-            shape = RoundedCornerShape(topEnd = 50.dp, bottomEnd = 50.dp),
-            selected = selected == RateType.PARALELO,
-            onClick = { onRateTypeChange(RateType.PARALELO) }
-        ) {
-            Text("Paralelo")
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelMedium,
+                textAlign = TextAlign.Center,
+                maxLines = 2
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = if (rate > 0) String.format("%.2f", rate) else "--",
+                style = MaterialTheme.typography.titleMedium,
+                textAlign = TextAlign.Center
+            )
+            Text("Bs", style = MaterialTheme.typography.labelSmall)
+            // Fecha que reporta la API para esta tasa (BCV/Euro BCV no
+            // publican fin de semana, así que ahí se ve la del viernes).
+            if (fecha != "-") {
+                Text("($fecha)", style = MaterialTheme.typography.labelSmall)
+            }
         }
     }
 }

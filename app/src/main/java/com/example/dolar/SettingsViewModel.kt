@@ -17,13 +17,16 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
-            initialValue = "#FF000000" // Default black
+            initialValue = "#FFFFFFFF" // Default blanco (fondo del widget es oscuro)
         )
 
     // Function to save the selected color
     fun saveWidgetTextColor(color: String) {
         viewModelScope.launch {
             settingsDataStore.saveWidgetTextColor(color)
+            // Repintar el widget YA con el nuevo color, en vez de esperar
+            // hasta el próximo ciclo de WorkManager (podían ser hasta 5h).
+            WidgetUpdater.refreshFromCache(getApplication())
         }
     }
 }
